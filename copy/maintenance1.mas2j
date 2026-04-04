@@ -1,0 +1,72 @@
+// =============================================================================
+// maintenance.mas2j — Main MAS Configuration
+// =============================================================================
+// ISE Project: Multi-Agent System for Autonomous Vehicle Predictive Maintenance
+// Entry point: run this file with Jason to launch the full MAS
+//
+// Launch:
+//   jason mas/maintenance.mas2j
+//   OR via IDE: open this file in jEdit+Jason plugin and press Run
+// =============================================================================
+
+MAS maintenance {
+
+    // -------------------------------------------------------------------------
+    // Environment
+    // -------------------------------------------------------------------------
+    // The Java environment bridges Jason agent percepts to the external layers:
+    //   - IoT sensor stream  (Codice 77780)
+    //   - ML health insights (Codice 95631)
+    //   - Blockchain layer   (Codice 87474)
+
+    environment: env.FleetMASEnvironment
+
+    // -------------------------------------------------------------------------
+    // Agents
+    // -------------------------------------------------------------------------
+
+    agents:
+
+        // -- Fleet Coordinator (Dias) -----------------------------------------
+        // Stigmergy coordination, IoT anomaly pattern detection, load balancing
+        fleet_coordinator_agent #1 [
+            beliefs: "mas/common/shared_beliefs.asl",
+            agentClass: "jason.bb.DefaultBeliefBase"
+        ];
+
+        // -- Vehicle Agents (Danial) ------------------------------------------
+        // BDI health assessment, V2V communication, urgency reasoning
+        // Spawn 3 vehicles for simulation; increase # for larger fleet tests
+        vehicle_agent #3 [
+            beliefs: "mas/common/shared_beliefs.asl",
+            agentClass: "jason.bb.DefaultBeliefBase"
+        ];
+
+        // -- Service Center Agent (Mary) --------------------------------------
+        // Slot management, negotiation, blockchain service record writes
+        service_center_agent #1 [
+            beliefs: "mas/common/shared_beliefs.asl",
+            agentClass: "jason.bb.DefaultBeliefBase"
+        ];
+
+    // -------------------------------------------------------------------------
+    // Agent Source Files
+    // -------------------------------------------------------------------------
+
+    aslSourcePath: "mas/agents";
+
+    // -------------------------------------------------------------------------
+    // Infrastructure
+    // -------------------------------------------------------------------------
+
+    infrastructure: Centralised
+
+    // -------------------------------------------------------------------------
+    // Execution settings
+    // -------------------------------------------------------------------------
+
+    executionControl: jason.control.ExecutionControl
+
+    // Set to true to enable step-by-step debugging in jEdit/IDE
+    // debug: true
+}

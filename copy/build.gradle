@@ -1,0 +1,53 @@
+// =============================================================================
+// build.gradle — Vehicle MAS Maintenance Project
+// =============================================================================
+// Requires: Java 11+, Jason 3.x jar in lib/
+//
+// Usage:
+//   gradle compileJava    — compile env/*.java
+//   gradle run            — compile + launch Jason MAS
+//   gradle jar            — package env classes into a jar
+// =============================================================================
+
+plugins {
+    id 'java'
+}
+
+group   = 'ise.mas'
+version = '1.0.0'
+
+def jasonJar = file("${System.getProperty('user.home')}/.gradle/caches/modules-2/files-2.1/io.github.jason-lang/jason-interpreter/3.2.1/36ce5ab2bfbcd80c6935e2d217cb88b66cbd61de/jason-interpreter-3.2.1.jar")
+println "Using Jason jar: ${jasonJar}"
+
+dependencies {
+    implementation files(jasonJar)
+}
+
+sourceSets {
+    main {
+        java {
+            srcDirs = ['env']
+        }
+    }
+}
+
+compileJava {
+    sourceCompatibility = '11'
+    targetCompatibility = '11'
+    options.encoding = 'UTF-8'
+}
+
+// Run the MAS via Jason CLI
+task run(type: JavaExec, dependsOn: compileJava) {
+    group       = 'application'
+    description = 'Launch Jason MAS'
+    classpath   = files(jasonJar, 'build/classes/java/main')
+    mainClass   = 'jason.infra.centralised.RunCentralisedMAS'
+    args        = ['maintenance.mas2j']
+    workingDir  = projectDir
+}
+
+jar {
+    archiveFileName = 'fleet-mas-env.jar'
+    from sourceSets.main.output
+}
