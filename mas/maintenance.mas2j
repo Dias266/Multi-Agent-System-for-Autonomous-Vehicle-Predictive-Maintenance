@@ -7,6 +7,6 @@ MAS maintenance {
         vehicle_agent #3;
         service_center_agent #1;
 
-    aslSourcePath: "agents";
+    aslSourcePath: "mas/agents";
 
 }

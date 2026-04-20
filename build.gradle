@@ -5,7 +5,7 @@ plugins {
 group   = 'ise.mas'
 version = '1.0.0'
 
-def jasonJar = file("${System.getProperty('user.home')}/.gradle/caches/modules-2/files-2.1/io.github.jason-lang/jason-interpreter/3.2.1/36ce5ab2bfbcd80c6935e2d217cb88b66cbd61de/jason-interpreter-3.2.1.jar")
+def jasonJar = file("${System.getProperty('user.home')}/.gradle/caches/modules-2/files-2.1/io.github.jason-lang/jason-interpreter/3.3.0/3c0fae64839e6566abeb9ed42ab63255e570f972/jason-interpreter-3.3.0.jar")
 def jsonImpl  = file("${System.getProperty('user.home')}/.gradle/caches/modules-2/files-2.1/org.glassfish/javax.json/1.1.4/943f240a509d3c70b448a55c6735591ecbd37c88/javax.json-1.1.4.jar")
 def jsonApi   = file("${System.getProperty('user.home')}/.gradle/caches/modules-2/files-2.1/javax.json/javax.json-api/1.1.4/c8efa3cfaeee2b05c2dfd54cba21548a081b1746/javax.json-api-1.1.4.jar")
 
@@ -24,8 +24,8 @@ sourceSets {
 }
 
 compileJava {
-    sourceCompatibility = '11'
-    targetCompatibility = '11'
+    sourceCompatibility = '21'
+    targetCompatibility = '21'
     options.encoding = 'UTF-8'
 }
 
@@ -33,8 +33,8 @@ task run(type: JavaExec, dependsOn: compileJava) {
     group       = 'application'
     description = 'Launch Jason MAS'
     classpath   = files(jasonJar, jsonImpl, jsonApi, 'build/classes/java/main')
-    mainClass   = 'jason.infra.centralised.RunCentralisedMAS'
-    args        = ['maintenance.mas2j']
+    mainClass   = 'jason.infra.local.RunLocalMAS'
+    args        = ['mas/maintenance.mas2j']
     workingDir  = projectDir
     jvmArgs     = [
         '-Djava.awt.headless=true',
