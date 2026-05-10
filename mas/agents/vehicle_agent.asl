@@ -1,53 +1,63 @@
 // =============================================================================
-// vehicle_agent.asl — VehicleAgent STUB
-// =============================================================================
-// Owner : Danial
-// This stub allows the MAS to compile and run so Dias can test the
-// FleetCoordinatorAgent independently without Danial's full implementation.
-//
+// vehicle_agent.asl — Finalized VehicleAgent STUB
 // =============================================================================
 
 // Initial beliefs
-vin(unknown).
 health_status(engine, 0.5).
-urgency_level(low).
+urgency_level(low). 
+pending_request(false).
 
-// Initial goals
 !start.
 
-// Startup: register with coordinator and fetch ML insights
 +!start
     <- .my_name(Me);
-       .print("[VehicleAgent:", Me, "] Starting up (stub).");
-       registerVehicle(Me);
-       fetchMLHealthInsights;
-       !assess_health.
+       .print("[VehicleAgent] ", Me, " online. Registering...");
+       .send(fleet_coordinator_agent, tell, vehicle_registered(Me));
+       !main_loop.
 
-// Simple health check stub
-+!assess_health
-    :  urgency_level(high)
-    <- .print("[VehicleAgent] High urgency — sending request to coordinator.");
-       .send(fleet_coordinator_agent, tell, request_received(self, high)).
-
-+!assess_health
-    :  urgency_level(critical)
-    <- .print("[VehicleAgent] CRITICAL urgency — sending request to coordinator.");
-       .send(fleet_coordinator_agent, tell, request_received(self, critical)).
+// The main loop keeps the agent active during your test scenarios
++!main_loop
+    <- !assess_health;
+       .wait(5000); // Wait 5 seconds between checks
+       !main_loop.
 
 +!assess_health
-    <- .print("[VehicleAgent] Health OK — no request needed.").
+    :  pending_request(true)
+    <- true. // Do nothing if we are already waiting for a repair
 
-// React to fleet-wide alerts from coordinator
-+fleet_anomaly_alert(AnomalyType, Count)
-    <- .print("[VehicleAgent] Fleet alert received: ", AnomalyType,
-              " across ", Count, " vehicles. Reassessing...").
++!assess_health
+    :  .my_name(Me) & (urgency_level(high) | urgency_level(critical))
+    <- .print("[VehicleAgent] ", Me, " needs maintenance. Checking pressure...");
+       !decide_to_send_request.
 
-// React to booking_pressure broadcasts
-+booking_pressure(critical)
-    <- .print("[VehicleAgent] Pressure CRITICAL — holding request.").
++!assess_health
+    :  .my_name(Me)
+    <- .print("[VehicleAgent] ", Me, " health OK.").
 
-+booking_pressure(Level)
-    <- .print("[VehicleAgent] Pressure updated: ", Level).
+// --- STIGMERGY LOGIC ---
 
-// Failure fallback
--!X <- .print("[VehicleAgent] Plan failed: ", X).
++!decide_to_send_request
+    :  .my_name(Me) & booking_pressure(critical)
+    <- .print("[VehicleAgent] ", Me, " sees CRITICAL pressure. Voluntary back-off active.").
+
++!decide_to_send_request
+    :  .my_name(Me) & urgency_level(U)
+    <- .print("[VehicleAgent] ", Me, " sending request (Urgency: ", U, ")");
+       -+pending_request(true);
+       .send(fleet_coordinator_agent, tell, request_received(Me, U));
+       .send(service_center_agent, tell, booking_request(Me, U)).
+
+// --- REACTION TO SUCCESS ---
+
++booking_confirmed(ID)
+    :  .my_name(Me)
+    <- .print("[VehicleAgent] ", Me, " repair confirmed! Resetting status.");
+       .send(fleet_coordinator_agent, tell, booking_confirmed(Me));
+       -+urgency_level(low);
+       -+pending_request(false).
+
+// --- REACTION TO ALERTS ---
+
++fleet_anomaly_alert(Type, Count)
+    :  .my_name(Me)
+    <- .print("[VehicleAgent] ", Me, " acknowledging fleet alert for: ", Type).
