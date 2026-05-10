@@ -5,7 +5,6 @@
 // This stub allows the MAS to compile and run so Dias can test the
 // FleetCoordinatorAgent independently without Danial's full implementation.
 //
-// Replace this file with Danial's full implementation when integrating.
 // =============================================================================
 
 // Initial beliefs
