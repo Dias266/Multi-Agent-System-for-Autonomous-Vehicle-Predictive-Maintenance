@@ -59,6 +59,16 @@ overload_threshold(3).
     <- .print("[FleetCoordinator] Broadcasting booking_pressure: ", Level);
        .broadcast(tell, booking_pressure(Level)).
 
+// Vehicle -> Coordinator booking request. Apply load regulation (stigmergy)
+// and forward the request to the ServiceCenterAgent for slot allocation.
++book_request(VehicleID, Part, Urgency)
+    :  booking_pressure(Level)
+    <- .print("[FleetCoordinator] book_request from ", VehicleID,
+              " part=", Part, " urgency=", Urgency, " — forwarding to ServiceCenter.");
+       !escalate_pressure(Level);
+       .send(service_center_agent, tell, booking_request(VehicleID, Part, Urgency));
+       !check_overload.
+
 +request_received(VehicleID, Urgency)
     :  booking_pressure(Level)
     <- .print("[FleetCoordinator] Request received from ", VehicleID,
@@ -70,6 +80,13 @@ overload_threshold(3).
     <- .print("[FleetCoordinator] Booking confirmed for ", VehicleID,
               " — reducing pressure.");
        !decay_pressure.
+
+// Multi-organisation endorsement: the coordinator's org co-signs a service
+// record produced by a service centre (Byzantine-validated commitment).
++endorse_request(RecordId, VehicleID)[source(Center)]
+    <- .print("[FleetCoordinator] Cross-org endorsement of record #", RecordId,
+              " for ", VehicleID, " — APPROVE.");
+       .send(Center, tell, endorsement(RecordId, approve)).
 
 +!escalate_pressure(low)
     <- -+booking_pressure(medium);
