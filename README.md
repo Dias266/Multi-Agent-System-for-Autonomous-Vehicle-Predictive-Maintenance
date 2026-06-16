@@ -1,151 +1,141 @@
-# Vehicle MAS Maintenance — Fleet Coordinator Setup
+# Multi-Agent System for Autonomous Vehicle Predictive Maintenance
+
+A Jason (AgentSpeak) multi-agent system in which vehicles, a fleet coordinator, and a service
+centre autonomously negotiate predictive maintenance. It is the integration layer of a three-course
+project at the University of Bologna (MSc Computer Science, Intelligent Embedded Systems):
+
+- **Codice 95631** — Machine Learning & Data Mining (maintenance prediction, anomaly detection)
+- **Codice 87474** — Distributed Systems (blockchain, Byzantine validation, endorsement)
+- **Codice 77780** — Embedded Systems & IoT (ESP32 telematics, ECDSA, MQTT)
+
+Coordination is **stigmergic**: agents react to a shared `booking_pressure` signal instead of
+negotiating point-to-point. The system runs standalone with mock IoT/ML/blockchain adapters, and
+can be pointed at a real Hyperledger Fabric backend by a single flag.
+
+---
 
 ## Prerequisites
 
 | Tool | Version | Notes |
 |------|---------|-------|
-| Java JDK | 11+ | Required for env/ compilation |
-| Jason | 3.x | Download jar manually (see below) |
-| Gradle | 7+ | Or use `gradlew` wrapper |
+| Java JDK | 21 | `sourceCompatibility = 21` in `build.gradle` |
+| Gradle | 7+ | Or use the `gradlew` wrapper |
+
+> Jason is pulled automatically from Maven Central
+> (`io.github.jason-lang:jason-interpreter:3.3.0`). **No manual jar download is needed.**
 
 ---
 
-## 1. Download Jason
-
-Jason does not publish to Maven Central. Download the jar manually:
-
-1. Go to: https://sourceforge.net/projects/jason/files/jason/
-2. Download `jason-3.x.jar` (latest 3.x release)
-3. Place it in `lib/jason-3.x.jar`
+## Project structure
 
 ```
-vehicle-mas-maintenance/
-└── lib/
-    └── jason-3.2.jar   ← place here
-```
-
----
-
-## 2. Project Structure
-
-```
-vehicle-mas-maintenance/
-│
+.
 ├── mas/
-│   ├── maintenance.mas2j               ← MAS entry point (run this)
+│   ├── maintenance.mas2j               # MAS entry point (run this)
 │   ├── agents/
-│   │   ├── fleet_coordinator_agent.asl ← Dias (this file)
-│   │   ├── vehicle_agent.asl           ← Danial (stub until integration)
-│   │   └── service_center_agent.asl    ← Mary  (stub until integration)
+│   │   ├── fleet_coordinator_agent.asl # Dias
+│   │   ├── vehicle_agent.asl           # Danial
+│   │   └── service_center_agent.asl    # Mary
 │   └── common/
-│       └── shared_beliefs.asl          ← Shared ontology (all 3 maintain)
-│
+│       └── shared_beliefs.asl          # Shared ontology (reference vocabulary)
 ├── env/
-│   └── FleetMASEnvironment.java        ← Java bridge (IoT + ML + Blockchain)
-│
+│   └── FleetMASEnvironment.java        # Java bridge (IoT + ML + Blockchain)
 ├── data/
-│   └── scenarios/
-│       ├── scenario_normal.json
-│       ├── scenario_high_urgency.json
-│       └── scenario_parts_shortage.json
-│
-├── lib/
-│   └── jason-3.x.jar                   ← place Jason jar here
-│
+│   └── scenarios/                      # scenario_normal / high_urgency / parts_shortage
+├── docs/
+│   ├── agent_design.md                 # BDI design of all agents + environment
+│   ├── message_protocol.md             # Authoritative inter-agent protocol (ACL)
+│   └── report/                         # Final report PDF goes here
+├── tests/
+│   └── results/                        # Captured / expected run transcripts per scenario
 ├── build.gradle
+├── settings.gradle
 └── README.md
 ```
 
----
-
-## 3. Compile
-
-```bash
-gradle compileJava
-```
-
-This compiles `env/FleetMASEnvironment.java` into `build/classes/`.
+See `docs/agent_design.md` and `docs/message_protocol.md` for the full design.
 
 ---
 
-## 4. Run the MAS
-
-### Option A — Gradle (recommended)
+## Run
 
 ```bash
 gradle run
 ```
 
-### Option B — Jason CLI directly
+This compiles `env/FleetMASEnvironment.java` and launches `mas/maintenance.mas2j` (1 fleet
+coordinator, 3 vehicles, 1 service centre) on the local Jason infrastructure.
+
+Capture a scenario transcript:
 
 ```bash
-java -cp "lib/jason-3.x.jar:build/classes/java/main" \
-     jason.infra.centralised.RunCentralisedMAS \
-     mas/maintenance.mas2j
+gradle run > tests/results/scenario_normal_results.txt 2>&1
 ```
-
-### Option C — jEdit + Jason plugin (GUI with step debugger)
-
-1. Open jEdit with the Jason plugin installed
-2. File → Open → `mas/maintenance.mas2j`
-3. Click the **Run** button (or Plugins → Jason → Run MAS)
-4. Agent reasoning traces appear in the Jason console panel
 
 ---
 
-## 5. Expected Output
+## What you should see
+
+A successful booking flows end-to-end through all three agents:
 
 ```
 [FleetCoordinator] Booting up — stigmergy coordination active.
-[FleetCoordinator] Registered with MaintenanceDataBridge.
-[FleetCoordinator] Broadcasting booking_pressure: low
-[FleetCoordinator] Monitoring IoT stream for fleet-wide anomaly patterns.
-[VehicleAgent:vehicle_agent1] Starting up (stub).
-[VehicleAgent:vehicle_agent2] Starting up (stub).
-[VehicleAgent:vehicle_agent3] Starting up (stub).
-[ServiceCenterAgent] Online (stub) — awaiting requests.
-[FleetCoordinator] Anomaly from vehicle_agent1 type=brake_wear severity=high
-[FleetCoordinator] Anomaly from vehicle_agent2 type=brake_wear severity=medium
+[ServiceCenterAgent] Operational. Ready for maintenance requests.
+[ServiceCenterAgent] Advertising free capacity: 3
+[FleetCoordinator] Vehicle registered: vehicle_agent1 — fleet size now 1
 [FleetCoordinator] COLLECTIVE ALERT — anomaly pattern detected: brake_wear across 2 vehicles.
 [FleetCoordinator] Broadcast sent: fleet_anomaly_alert(brake_wear,2).
-[BLOCKCHAIN-MOCK] Fleet anomaly logged: brake_wear x2
+[VehicleAgent:vehicle_agent1] Sending book_request to FleetCoordinator (part=brake_pad).
+[FleetCoordinator] book_request from vehicle_agent1 ... — forwarding to ServiceCenter.
+[ServiceCenterAgent] Resources found. Allocating slot1 to vehicle_agent1 (tech=tech_a)
+[ServiceCenterAgent] Logged record #1 — vehicle=vehicle_agent1 part=brake_pad tech=tech_a cost=140
+[FleetCoordinator] Cross-org endorsement of record #1 for vehicle_agent1 — APPROVE.
+[ServiceCenterAgent] Record #1 ENDORSED (approve) — committed to ledger.
+[VehicleAgent] Booking CONFIRMED at service_center_agent slot slot1.
 ```
 
 ---
 
-## 6. Swapping Mocks for Real Integrations
+## Message protocol (summary)
 
-In `FleetMASEnvironment.java`, replace the mock constructors in `init()`:
-
-```java
-// Current (mock):
-iotAdapter        = new MockIoTStream();
-mlAdapter         = new MockMLPipeline();
-blockchainAdapter = new MockBlockchainClient();
-
-// Replace with real adapters:
-iotAdapter        = new MQTTIoTStream("mqtt://localhost:1883");
-mlAdapter         = new HTTPMLPipeline("http://localhost:5000/predict");
-blockchainAdapter = new FabricBlockchainClient("connection-profile.yaml");
+```
+Vehicle  --book_request(V, Part, Urg)-->  Coordinator
+Coordinator --booking_request(V, Part, Urg)--> Service
+Service  --booking_confirmed(Slot, Center) | booking_deferred(Alt, Center) | booking_declined(Reason)--> Vehicle
+Service  --booking_confirmed(V) | endorse_request(RID, V)--> Coordinator
+Coordinator --endorsement(RID, approve|reject)--> Service
+Coordinator --booking_pressure(L) | fleet_anomaly_alert(Type, N)--> (broadcast)
 ```
 
-Each real adapter must implement the corresponding interface:
-- `IoTStreamAdapter`
-- `MLPipelineAdapter`
-- `BlockchainAdapter`
+Full catalogue, sequence diagrams and invariants: `docs/message_protocol.md`.
 
 ---
 
-## 7. Running Specific Scenarios
+## Real vs mock integrations
 
-Edit `MockIoTStream` in `FleetMASEnvironment.java` to load from a scenario file,
-or pass the scenario path as an init arg in `maintenance.mas2j`:
+`env/FleetMASEnvironment.java` runs with mock adapters by default
+(`USE_REAL_INTEGRATIONS = false`). Set it to `true` to point `writeServiceRecord` /
+`logFleetAnomaly` at a Hyperledger-Fabric-backed Distributed Systems backend at
+`http://localhost:3000`.
 
-```
-environment: env.FleetMASEnvironment("data/scenarios/scenario_high_urgency.json")
-```
+> The ML/crypto edge actions (`evaluateRandomForest`, `deriveECDSAKey`, …) are **acknowledgement
+> hooks**: Jason environment actions cannot bind result variables back into a plan, so the
+> VehicleAgent simulates these values internally. To use a real ML pipeline, convert them to
+> percept-injecting actions or to prefixed internal actions. See `docs/agent_design.md` §5.
 
-Then update `FleetMASEnvironment.init(String[] args)` to read `args[0]`.
+---
+
+## Scenarios
+
+| File | Demonstrates |
+|------|--------------|
+| `data/scenarios/scenario_normal.json` | All requests confirmed; records logged and endorsed |
+| `data/scenarios/scenario_high_urgency.json` | Pressure escalates to critical; stigmergy load-shedding (defer) |
+| `data/scenarios/scenario_parts_shortage.json` | Out-of-stock part is declined with reason |
+
+> Scenario JSON files are not yet auto-loaded by the environment. To exercise the parts-shortage
+> path, set `parts_inventory(brake_pad, 0)` in `service_center_agent.asl`, or extend
+> `FleetMASEnvironment.init(args)` to read a scenario file and inject the initial beliefs.
 
 ---
 
@@ -153,7 +143,7 @@ Then update `FleetMASEnvironment.init(String[] args)` to read `args[0]`.
 
 | Agent | Owner | File |
 |-------|-------|------|
-| FleetCoordinatorAgent | Dias | `fleet_coordinator_agent.asl` |
-| VehicleAgent | Danial | `vehicle_agent.asl` |
-| ServiceCenterAgent | Mary | `service_center_agent.asl` |
-| Java environment bridge | All | `FleetMASEnvironment.java` |
+| FleetCoordinatorAgent | Dias | `mas/agents/fleet_coordinator_agent.asl` |
+| VehicleAgent | Danial | `mas/agents/vehicle_agent.asl` |
+| ServiceCenterAgent | Mary | `mas/agents/service_center_agent.asl` |
+| Java environment bridge | All | `env/FleetMASEnvironment.java` |
