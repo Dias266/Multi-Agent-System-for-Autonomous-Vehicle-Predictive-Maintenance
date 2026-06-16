@@ -122,14 +122,15 @@ booking_status(none).          // tracks: none, requested, confirmed, deferred
     <- .print("[VehicleAgent] Traffic high, but health context demands scheduling. Escalating to coordinator.");
        .my_name(Me);
        -+booking_status(requested);
-       .send(fleet_coordinator_agent, tell, anomaly_flagged(Me, high)).
+       .send(fleet_coordinator_agent, tell, book_request(Me, brake_pad, high)). 
+
 
 +!request_fleet_booking
     :  booking_status(deferred) | booking_status(none)
     <- .my_name(Me);
        .print("[VehicleAgent] Sending maintenance request to FleetCoordinator.");
        -+booking_status(requested);
-       .send(fleet_coordinator_agent, tell, anomaly_flagged(Me, high)).
+       .send(fleet_coordinator_agent, tell, book_request(Me, brake_pad, high)).
 
 // Reactive Plan: React to environmental booking pressure shifts (Stigmergy)
 +booking_pressure(Level)
