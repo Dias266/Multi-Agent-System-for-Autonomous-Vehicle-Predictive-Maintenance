@@ -26,8 +26,9 @@ public class FleetMASEnvironment extends Environment {
     // -------------------------------------------------------------------------
     // SET true  → connects to real DS backend at localhost:3000
     // SET false → uses mock data (standalone simulation)
+    // Default is false so the MAS runs end-to-end with no external backends.
     // -------------------------------------------------------------------------
-    private static final boolean USE_REAL_INTEGRATIONS = true;
+    private static final boolean USE_REAL_INTEGRATIONS = false;
 
     // DS project endpoints (from start-all.sh output)
     private static final String DS_BACKEND_URL  = "http://localhost:3000";
@@ -101,6 +102,21 @@ public class FleetMASEnvironment extends Environment {
                 addPercept("fleet_coordinator_agent",
                         ASSyntax.createLiteral("vehicle_registered",
                                 ASSyntax.createAtom(vin)));
+                return true;
+ 
+            // -----------------------------------------------------------------
+            // Edge / ML / crypto simulation hooks.
+            // Jason environment actions cannot bind result variables back into a
+            // plan, so the VehicleAgent simulates the actual values internally
+            // and these actions simply acknowledge success. Implemented here so
+            // that any agent invoking them never hits the "Unknown action" path.
+            // -----------------------------------------------------------------
+            case "fetchEdgeSensors":
+            case "evaluateRandomForest":
+            case "evaluateIsolationForest":
+            case "deriveECDSAKey":
+            case "signTelemetryRecord":
+                logger.fine("[ENV] Simulated edge/ML/crypto action: " + functor);
                 return true;
 
             case "fetchMLHealthInsights":
