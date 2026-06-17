@@ -1,180 +1,161 @@
 // =============================================================================
-// vehicle_agent.asl — Full VehicleAgent Implementation
+// vehicle_agent.asl — VehicleAgent (runnable, protocol-aligned)
 // =============================================================================
 // Owner : Danial
-// Fully integrated with Edge IoT, Machine Learning Assets, and Stigmergy Signalling.
-// Aligned with FleetCoordinatorAgent (Dias) interface configurations.
+// Notes : Self-contained edge + ML + ECDSA simulation in AgentSpeak.
+//         Jason ENVIRONMENT actions cannot bind result variables back into a
+//         plan, so telemetry/ML values are simulated internally here. The
+//         edge/ML/crypto env actions (deriveECDSAKey, signTelemetryRecord, ...)
+//         are invoked only as success acknowledgements.
+//
+// Protocol (shared across all three agents):
+//   Vehicle  -> Coordinator : book_request(Vehicle, Part, Urgency)
+//   Coordinator -> Service   : booking_request(Vehicle, Part, Urgency)
+//   Service  -> Vehicle      : booking_confirmed(Slot, Center)
+//                              booking_deferred(AltSlot, Center)
+//                              booking_declined(Reason)
+//   Service  -> Coordinator  : booking_confirmed(Vehicle)
 // =============================================================================
 
-/* Initial beliefs */
-vin("XYZ1234567890").          // Standardized format derived from digital twin
-mileage(0).                    // Initial simulated OBD-II mileage
-current_temperature(25.0).     // Initial edge sensor reading 
+/* ---------------- Initial beliefs ---------------- */
+vin("XYZ1234567890").
+mileage(0).
+current_temperature(25.0).
 engine_status(ok).
 battery_condition(good).
-brake_condition(good).         // Key predictor for Random Forest classifier
-reported_issues(0).            // High-weight ML feature
+brake_condition(good).
+reported_issues(0).
 
-// System state tracking
 urgency_level(low).
 is_registered(false).
-booking_status(none).          // tracks: none, requested, confirmed, deferred
-booking_pressure(low).         // Default baseline value aligned with coordinator baseline
+booking_status(none).          // none | requested | confirmed
+booking_pressure(low).         // updated by coordinator broadcasts (stigmergy)
+service_part(oil_filter).      // part requested when booking (may switch)
 
-/* Initial goals */
+/* ---------------- Initial goal ---------------- */
 !initialize_agent.
 
-/* Plans */
-
-// Startup: complete local initialization and trigger registration
+/* ---------------- Startup & registration ---------------- */
 +!initialize_agent
     <- .my_name(Me);
        .print("[VehicleAgent:", Me, "] Initializing internal components...");
        !register_on_blockchain.
 
-// F1: Register vehicle twin on the permissioned Hyperledger network
+// F1: Register the vehicle digital twin on the permissioned network
 +!register_on_blockchain
     :  vin(VIN) & is_registered(false)
     <- .my_name(Me);
-       .print("[VehicleAgent] Registering VIN ", VIN, " on Hyperledger Fabric...");
-       // Custom internal action mimicking the Node.js SDK registration call
-       registerVehicle(Me, VIN); 
-       +is_registered(true);
+       .print("[VehicleAgent:", Me, "] Registering VIN ", VIN, " on Hyperledger Fabric...");
+       registerVehicle(Me, VIN);
+       -+is_registered(true);
        !collect_telemetry.
-       
+
 +!register_on_blockchain
     <- .print("[VehicleAgent] Registration skipped or malformed VIN.").
 
-// F2: Telemetry loop responding to the ESP32 FSM states & sampling cadence
+/* ---------------- Telemetry / ML / signing loop ---------------- */
 +!collect_telemetry
     :  is_registered(true)
-    <- .print("[VehicleAgent] Polling edge sensors via MQTT topic stream...");
-       
-       // Simulate telemetry gathering step
-       fetchEdgeSensors(Temp, Miles);
-       -+current_temperature(Temp);
-       -+mileage(Miles);
-       
-       // Process through the ML Explainable Decision Engine inside the network
-       !query_ml_insights;
-       
-       // Dynamic cadence calculation mimicking ESP32 FSM:
-       // 5s for Normal (<30C), 2s for Warning (30C-40C), 1s for Critical (>=40C)
+    <- !sense_edge;
+       !classify_health;
+       !sign_and_publish;
+       !evaluate_maintenance_need;
        !calculate_sampling_delay(Delay);
        .wait(Delay);
        !collect_telemetry.
 
-// Adaptive sampling delays mapped from Layer 1 FSM
+// Simulated DS18B20 temperature + OBD-II mileage acquisition
++!sense_edge
+    <- .random(R);
+       T = 25.0 + (R * 25.0);          // 25.0 .. 50.0 C
+       -+current_temperature(T);
+       ?mileage(M);
+       NM = M + 100;
+       -+mileage(NM).
+
+// Mock Random Forest (maintenance need) + Isolation Forest (anomaly) decisions
++!classify_health
+    :  current_temperature(T) & reported_issues(I)
+    <- if (T >= 40.0 | I > 0) {
+           -+urgency_level(high);
+           .print("[VehicleAgent] ML: maintenance needed (T=", T, ", issues=", I, ").")
+       } else {
+           -+urgency_level(low)
+       };
+       if (T >= 45.0) {
+           -+telemetry_anomaly(true);
+           .print("[VehicleAgent] Isolation Forest: statistical outlier telemetry (T=", T, ").")
+       }.
+
+// F3: ECDSA signing + MQTT publish (env actions acknowledge success only)
++!sign_and_publish
+    :  vin(VIN) & current_temperature(T) & mileage(M) & urgency_level(U)
+    <- .my_name(Me);
+       deriveECDSAKey(VIN, key);
+       signTelemetryRecord(T, M, U, key, sig);
+       .print("[VehicleAgent:", Me, "] Published signed telemetry (T=", T,
+              ", mileage=", M, ", urgency=", U, ").").
+
+// Adaptive sampling cadence mapped from the Layer-1 ESP32 FSM
 +!calculate_sampling_delay(5000) : current_temperature(T) & T < 30.0.
 +!calculate_sampling_delay(2000) : current_temperature(T) & T >= 30.0 & T < 40.0.
 +!calculate_sampling_delay(1000) : current_temperature(T) & T >= 40.0.
-+!calculate_sampling_delay(5000). // Fallback safe delay
++!calculate_sampling_delay(5000).      // safe fallback
 
-// Layer 3: Machine Learning Asset Integration (Random Forest & Isolation Forest)
-+!query_ml_insights
-    :  current_temperature(Temp) & mileage(Miles) & brake_condition(Brakes) & reported_issues(Issues)
-    <- // Call the serialised Random Forest model asset stored on the ledger
-       evaluateRandomForest(Temp, Miles, Brakes, Issues, Prediction, Confidence, Explanations);
-       evaluateIsolationForest(Temp, AnomalyScore);
-       
-       // Log prediction analytics directly to local beliefs
-       if (Prediction == 1) {
-           -+urgency_level(high);
-           .print("[VehicleAgent] ML Warning: Maintenance Needed! Confidence: ", Confidence);
-           .print("[VehicleAgent] Explanation Trace: ", Explanations);
-       } else {
-           -+urgency_level(low);
-       };
-       
-       // Incorporate Unsupervised Isolation Forest results for Byzantine validation
-       if (AnomalyScore > 0.75) {
-           .print("[VehicleAgent] Warning: High statistical outlier telemetry detected locally!");
-           +telemetry_anomaly;
-           -+urgency_level(high); // Escalates urgency state variables cleanly
-       } else {
-           -telemetry_anomaly;
-       };
-
-       // Sign telemetry with ECDSA and broadcast to the fleet
-       !sign_and_publish_mqtt(Temp, Miles, Prediction);
-       !evaluate_maintenance_need.
-
-// F3: ECDSA Cryptographic signing and publishing 
-+!sign_and_publish_mqtt(T, M, Pred)
-    :  vin(VIN)
-    <- deriveECDSAKey(VIN, SecretKey);
-       signTelemetryRecord(T, M, Pred, SecretKey, CryptographicSignature);
-       // Publish at QoS level 1 to ensure delivery through Mosquitto
-       .broadcast(tell, telemetry_update(VIN, T, M, Pred, CryptographicSignature)).
-
-// Stigmergy and Adaptive Coordination Logic
+/* ---------------- Stigmergy-aware booking ---------------- */
 +!evaluate_maintenance_need
     :  urgency_level(high) & booking_status(none)
-    <- .print("[VehicleAgent] evaluate_maintenance_need checking scheduling constraints...");
-       !request_fleet_booking.
+    <- !request_fleet_booking.
 
 +!evaluate_maintenance_need
-    <- true. // Health is fine, do nothing.
+    <- true.                            // health fine, or already requested
 
-// Formulate booking request adhering to global stigmergy pressure limits
+// Defer autonomously under critical backpressure (load shedding)
 +!request_fleet_booking
     :  booking_pressure(critical) & not urgency_level(critical)
-    <- .print("[VehicleAgent] Stigmergy backpressure active (CRITICAL). Deferring request autonomously to reduce congestion.").
+    <- .print("[VehicleAgent] Critical backpressure — deferring request to reduce congestion.").
 
+// Otherwise send a booking request to the FleetCoordinator
 +!request_fleet_booking
-    :  booking_pressure(high) & urgency_level(high)
-    <- .print("[VehicleAgent] Traffic high, but health context demands scheduling. Escalating to coordinator.");
-       .my_name(Me);
-       -+booking_status(requested);
-       // Matches structural pattern: +book_request(VehicleID, Part, Urgency)
-       .send(fleet_coordinator_agent, tell, book_request(Me, brake_pad, high)). 
-
-+!request_fleet_booking
-    :  booking_status(deferred) | booking_status(none)
+    :  service_part(P)
     <- .my_name(Me);
-       .print("[VehicleAgent] Sending maintenance request to FleetCoordinator.");
+       .print("[VehicleAgent:", Me, "] Sending book_request to FleetCoordinator (part=", P, ").");
        -+booking_status(requested);
-       // Matches structural pattern: +book_request(VehicleID, Part, Urgency)
-       .send(fleet_coordinator_agent, tell, book_request(Me, brake_pad, high)).
+       .send(fleet_coordinator_agent, tell, book_request(Me, P, high)).
 
-// Reactive Plan: React to environmental booking pressure shifts (Stigmergy)
+/* ---------------- Reactive coordination plans ---------------- */
+// Stigmergy signal: fleet booking pressure changed
 +booking_pressure(Level)
-    <- .print("[VehicleAgent] Stigmergy Signal: Fleet booking pressure changed to: ", Level);
-       if (Level == critical & booking_status(requested) & not urgency_level(critical)) {
-           .print("[VehicleAgent] Shedding load. Relinquishing active request slot.");
-           -+booking_status(deferred);
-       }.
+    <- .print("[VehicleAgent] Stigmergy signal: booking pressure = ", Level).
 
-// Reactive Plan: Fleet-wide pattern notifications from coordinator
+// Fleet-wide brake_wear pattern -> prioritise brake service
++fleet_anomaly_alert(brake_wear, Count)
+    <- .print("[VehicleAgent] Fleet brake_wear pattern across ", Count,
+              " units. Prioritising brake service.");
+       -+service_part(brake_pad);
+       ?reported_issues(I);
+       -+reported_issues(I + 1).
+
+// Any other fleet-wide anomaly pattern
 +fleet_anomaly_alert(AnomalyType, Count)
-    <- .print("[VehicleAgent] Fleet alert received: ", AnomalyType, " tracking across ", Count, " units. Increasing internal polling safety bounds.");
-       if (reported_issues(I)) { -+reported_issues(I + 1); }.
+    <- .print("[VehicleAgent] Fleet alert: ", AnomalyType, " across ", Count, " units.");
+       ?reported_issues(I);
+       -+reported_issues(I + 1).
 
-// Handling negotiation loops routed from FleetCoordinator & ServiceCenter
+// Booking outcomes from the ServiceCenter
 +booking_confirmed(Slot, Center)
-    <- .print("[VehicleAgent] Booking SUCCESS. Confirmed at ", Center, " for slot: ", Slot);
+    <- .print("[VehicleAgent] Booking CONFIRMED at ", Center, " slot ", Slot, ".");
        -+booking_status(confirmed).
 
-+booking_deferred(AlternativeSlot, Center)[source(Sender)]
-    <- .print("[VehicleAgent] Booking deferred by ", Center, ". Alternative offered: ", AlternativeSlot);
-       -+booking_status(confirmed);
-       // Closes negotiation loop to make sure the coordinator isn't left hanging
-       .send(Sender, tell, accept_alternative_slot(AlternativeSlot)).
++booking_deferred(AltSlot, Center)
+    <- .print("[VehicleAgent] Booking deferred by ", Center,
+              " — alternative slot ", AltSlot, " accepted.");
+       -+booking_status(confirmed).
 
 +booking_declined(Reason)
-    <- .print("[VehicleAgent] Booking failed due to: ", Reason, ". Retrying alternative pathways.");
-       -+booking_status(none);
-       .wait(1000);
-       !evaluate_maintenance_need.
+    <- .print("[VehicleAgent] Booking declined: ", Reason, ". Will retry on next cycle.");
+       -+booking_status(none).
 
-// Failure fallback plans to prevent execution halts
--!collect_telemetry
-    <- .print("[VehicleAgent] Telemetry execution loop failure! Re-initializing in 5 seconds...");
-       .wait(5000);
-       !collect_telemetry.
-
--!X <- .print("[VehicleAgent] Execution error on plan step: ", X).
-
-// =============================================================================
-// END OF vehicle_agent.asl
-// =============================================================================
+/* ---------------- Failure fallback ---------------- */
+-!X
+    <- .print("[VehicleAgent] Plan failure on: ", X).
