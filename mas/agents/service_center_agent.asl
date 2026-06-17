@@ -89,7 +89,13 @@ record_valid(RID) :- service_record(RID, _, _, _, _).
               " (part=", Part, ", urgency=", Urgency, ")");
        !evaluate_request(VehicleID, Part, Urgency).
 
-// 1. Success: free slot AND part in stock AND capacity AND a qualified technician
+// 1. Success: free slot AND part in stock AND capacity AND a qualified technician.
+//    Marked [atomic] so the whole reservation (slot, capacity, part, record id)
+//    runs without interleaving. This removes the concurrency race in which a
+//    concurrent booking could transiently empty a belief while many vehicles
+//    book at once. NOTE: there is no .wait inside this plan; the timed service
+//    and the slot release are handled by the non-atomic pending_release plan.
+@sc_accept[atomic]
 +!evaluate_request(VehicleID, Part, Urgency)
     :  available_slot(SlotID, available)
      & parts_inventory(Part, Qty) & Qty > 0
@@ -97,7 +103,25 @@ record_valid(RID) :- service_record(RID, _, _, _, _).
      & qualified(Tech, Part)
     <- .print("[ServiceCenterAgent] Resources found. Allocating ", SlotID,
               " to ", VehicleID, " (tech=", Tech, ")");
-       !perform_booking(VehicleID, SlotID, Part, Tech).
+       // Reserve slot, technician and one part using the context-bound values
+       -available_slot(SlotID, available); +available_slot(SlotID, occupied);
+       -current_capacity(C);               +current_capacity(C - 1);
+       -parts_inventory(Part, Qty);        +parts_inventory(Part, Qty - 1);
+       // Build the immutable, monotonically-ordered service record
+       ?parts_cost(Part, PC); ?service_cost(labour_hour, LC); Cost = PC + LC;
+       ?record_counter(RC); RID = RC + 1;
+       -record_counter(RC); +record_counter(RID);
+       +service_record(RID, VehicleID, Part, Tech, Cost);
+       // Log to the blockchain (Codice 87474) and request cross-org endorsement
+       writeServiceRecord(VehicleID, scheduled_maintenance);
+       .send(fleet_coordinator_agent, tell, endorse_request(RID, VehicleID));
+       // Confirm to the vehicle and notify the coordinator (decays pressure)
+       .send(VehicleID, tell, booking_confirmed(SlotID, service_center_agent));
+       .send(fleet_coordinator_agent, tell, booking_confirmed(VehicleID));
+       .print("[ServiceCenterAgent] Logged record #", RID, " — vehicle=", VehicleID,
+              " part=", Part, " tech=", Tech, " cost=", Cost);
+       // Hand off the timed service + release to a non-atomic intention
+       +pending_release(SlotID, VehicleID, Tech, RID).
 
 // 2. Parts shortage: requested part out of stock -> decline with reason
 +!evaluate_request(VehicleID, Part, Urgency)
@@ -129,52 +153,27 @@ record_valid(RID) :- service_record(RID, _, _, _, _).
        .send(VehicleID, tell, booking_declined(unavailable)).
 
 // ---------------------------------------------------------------------------
-// PLANS: BOOKING, RESOURCE UPDATES & SERVICE EXECUTION
+// PLANS: SERVICE COMPLETION & TIMED RELEASE (non-atomic — may .wait)
 // ---------------------------------------------------------------------------
 
-+!perform_booking(VehicleID, SlotID, Part, Tech)
-    <- // Reserve the slot and one technician
-       -+available_slot(SlotID, occupied);
-       ?current_capacity(C); NewCap = C - 1; -+current_capacity(NewCap);
-
-       // Reserve one unit of the required part
-       ?parts_inventory(Part, Qty); NewQty = Qty - 1;
-       -parts_inventory(Part, Qty); +parts_inventory(Part, NewQty);
-
-       // Compute the service cost (parts + one labour hour)
-       ?parts_cost(Part, PC); ?service_cost(labour_hour, LC); Cost = PC + LC;
-
-       // Create an immutable, monotonically-ordered service record
-       ?record_counter(RC); RID = RC + 1; -+record_counter(RID);
-       +service_record(RID, VehicleID, Part, Tech, Cost);
-
-       // Log the record to the blockchain (Codice 87474)
-       writeServiceRecord(VehicleID, scheduled_maintenance);
-       .print("[ServiceCenterAgent] Logged record #", RID, " — vehicle=", VehicleID,
-              " part=", Part, " tech=", Tech, " cost=", Cost);
-
-       // Request multi-organisation endorsement from the FleetCoordinator
-       .send(fleet_coordinator_agent, tell, endorse_request(RID, VehicleID));
-
-       // Confirm the booking to the vehicle and notify the coordinator
-       .send(VehicleID, tell, booking_confirmed(SlotID, service_center_agent));
-       .send(fleet_coordinator_agent, tell, booking_confirmed(VehicleID));
-
-       // Publish service completion (stigmergy / MQTT analog)
-       !complete_service(VehicleID, Part, Tech, RID);
-
-       .wait(2000);
-       !release_slot(SlotID).
-
-+!complete_service(VehicleID, Part, Tech, RID)
+// Triggered by the reservation above. Runs the (simulated 2 s) service, then
+// frees the slot. This runs as its own non-atomic intention, so the .wait does
+// not block other bookings.
++pending_release(SlotID, VehicleID, Tech, RID)
     <- .send(fleet_coordinator_agent, tell, service_completed(VehicleID, RID));
        .print("[ServiceCenterAgent] Service completed for ", VehicleID,
-              " by ", Tech, " (record #", RID, ").").
+              " by ", Tech, " (record #", RID, ").");
+       .wait(2000);
+       -pending_release(SlotID, VehicleID, Tech, RID);
+       !release_slot(SlotID).
 
+// Restore the slot and one unit of capacity atomically (no interleaving, no wait).
+@sc_release[atomic]
 +!release_slot(SlotID)
-    <- -+available_slot(SlotID, available);
-       ?current_capacity(C); FreedCap = C + 1; -+current_capacity(FreedCap);
-       .print("[ServiceCenterAgent] ", SlotID, " is now free — capacity restored to ", FreedCap);
+    :  current_capacity(C)
+    <- -available_slot(SlotID, occupied); +available_slot(SlotID, available);
+       -current_capacity(C); +current_capacity(C + 1);
+       .print("[ServiceCenterAgent] ", SlotID, " is now free — capacity restored to ", C + 1);
        !advertise_capacity.
 
 // ---------------------------------------------------------------------------
