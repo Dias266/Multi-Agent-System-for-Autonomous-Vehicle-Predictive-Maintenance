@@ -69,6 +69,9 @@ overload_threshold(3).
        .send(service_center_agent, tell, booking_request(VehicleID, Part, Urgency));
        !check_overload.
 
+
+
+
 +request_received(VehicleID, Urgency)
     :  booking_pressure(Level)
     <- .print("[FleetCoordinator] Request received from ", VehicleID,
@@ -227,6 +230,28 @@ overload_threshold(3).
     <- .print("[FleetCoordinator] Fleet status — size=", N,
               " booking_pressure=", Level);
        .send(service_center_agent, tell, fleet_status(N, Level)).
+
+
+
+// ---------------------------------------------------------------------------
+// PLANS: SERVICE COMPLETION HANDLING
+// ---------------------------------------------------------------------------
++service_completed(VehicleID, RID)[source(Center)]
+    <- .print("[FleetCoordinator] Processing service completion for ", VehicleID, 
+              " from center: ", Center);
+       
+       // Optional: Log final status or settlement to blockchain 
+       // (adjust custom action name to match your environment wrapper if needed)
+       // logServiceSettlementToBlockchain(VehicleID, RID);
+       
+       // --- FIXED: Notify the vehicle that service is complete so it resets its status ---
+       .send(VehicleID, tell, service_finished);
+       
+       // Request an updated status report to confirm fleet health
+       !report_fleet_status;
+       
+       // Housekeeping: Remove the belief so it doesn't clutter the belief base
+       -service_completed(VehicleID, RID)[source(Center)].
 
 
 // ---------------------------------------------------------------------------
