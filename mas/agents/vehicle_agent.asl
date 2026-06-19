@@ -107,6 +107,35 @@ service_part(oil_filter).      // part requested when booking (may switch)
 // Guarded plan: if we have high urgency and a part is defined, book it immediately
 
 
+
+
+// =============================================================================
+// vehicle_agent.asl — Fix Deferred Booking Logic Suffixes
+// =============================================================================
+
+// 1. Rename the goal head to match the main telemetry evaluation cycle signature
++!evaluate_maintenance_need : booking_status(deferred) <-
+    .print("[VehicleAgent] Maintenance evaluation paused. Request is deferred due to critical fleet load-shedding.");
+    
+    .wait(3000); 
+    
+    ?booking_pressure(CurrentPressure);
+    if (CurrentPressure == low | CurrentPressure == medium) {
+        .print("[VehicleAgent] Fleet backpressure relaxed. Re-enabling maintenance evaluation pathways.");
+        -+booking_status(none);
+    };
+    !evaluate_maintenance_need. // Fixed suffix
+
+// 2. Fix the suffix inside the reactive booking deferral handler
++booking_deferred(AlternativeSlot, Center) <- 
+    .print("[VehicleAgent] Booking DEFERRED by ", Center, ". Capacity full. Retrying shortly...");
+    -+booking_status(none); 
+    
+    .random(R);
+    BackoffTime = 2000 + (R * 1500); 
+    .wait(BackoffTime);
+    !evaluate_maintenance_need. // Fixed suffix
+
 // 1. Target Condition: High urgency and fully clear state -> Proceed with booking
 +!evaluate_maintenance_need
     : urgency_level(high) & booking_status(none) & service_part(P)
