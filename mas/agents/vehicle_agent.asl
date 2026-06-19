@@ -136,6 +136,9 @@ service_part(oil_filter).      // part requested when booking (may switch)
     .wait(BackoffTime);
     !evaluate_maintenance_need. // Fixed suffix
 
+
+
+
 // 1. Target Condition: High urgency and fully clear state -> Proceed with booking
 +!evaluate_maintenance_need
     : urgency_level(high) & booking_status(none) & service_part(P)
@@ -161,11 +164,25 @@ service_part(oil_filter).      // part requested when booking (may switch)
        +service_part(oil_filter);
        !request_fleet_booking.
 
+// Unify the deferred handler under the correct '!evaluate_maintenance_need' signature
++!evaluate_maintenance_need : booking_status(deferred) <-
+    .print("[VehicleAgent] Maintenance evaluation paused. Request is deferred due to active fleet load-shedding.");
+    .wait(4000); 
+    
+    ?booking_pressure(CurrentPressure);
+    if (CurrentPressure == low | CurrentPressure == medium) {
+        .print("[VehicleAgent] Fleet backpressure relaxed. Re-enabling evaluation pathways.");
+        -+booking_status(none)
+    } else {
+        !evaluate_maintenance_need
+    }.
+
 // 5. Unconditional catch-all fallback to handle unmapped telemetry evaluation states (low urgency)
 +!evaluate_maintenance_need : true <-
     ?urgency_level(Urgency);
     ?reported_issues(Issues);
     .wait(1000). // Smoothly yield to prevent execution lock spikes
+
 
 
     
@@ -261,16 +278,6 @@ service_part(oil_filter).      // part requested when booking (may switch)
 // =============================================================================
 // vehicle_agent.asl — Fix Deferred Booking Logic
 // =============================================================================
-
-+booking_deferred(AlternativeSlot, Center) <- 
-    .print("[VehicleAgent] Booking DEFERRED by ", Center, ". Capacity full. Retrying shortly...");
-    -+booking_status(none); // Reset status block so it can try again
-    
-    // Introduce an intentional randomized backoff to avoid a thundering herd problem
-    .random(R);
-    BackoffTime = 2000 + (R * 1500); 
-    .wait(BackoffTime);
-    !evaluate_maintenance.
 
 +booking_declined(Reason)
     <- .print("[VehicleAgent] Booking declined: ", Reason, ". Will retry on next cycle.");
