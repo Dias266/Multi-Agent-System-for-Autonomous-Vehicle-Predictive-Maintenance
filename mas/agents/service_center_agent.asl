@@ -83,75 +83,11 @@ record_valid(RID) :- service_record(RID, _, _, _, _).
 // PLANS: HANDLING REQUESTS
 // ---------------------------------------------------------------------------
 
-// Booking request forwarded by the FleetCoordinator. Carries the required Part.
-// =============================================================================
-// service_center_agent.asl — Strict Param Validation Fix
-// =============================================================================
-
-// Handle booking request - pass variables cleanly down
-+booking_request(VehicleID, TargetPart, Urgency) <- 
-    .print("[ServiceCenterAgent] Processing incoming request from ", VehicleID, " for part: ", TargetPart);
-    !evaluate_request(VehicleID, TargetPart, Urgency).
-
-// Atomic Resource Check matching specific TargetPart requested
-+!evaluate_request(VehicleID, TargetPart, Urgency) 
-    : available_slot(SlotID, available) & 
-      parts_inventory(TargetPart, Qty) & Qty > 0 & 
-      current_capacity(C) & C > 0 & 
-      qualified(Tech, TargetPart) <- 
-    
-    // Explicitly lock slot status immediately to protect from race conditions
-    -+available_slot(SlotID, occupied);
-    .print("[ServiceCenterAgent] Slot secured. Allocating ", SlotID, " to ", VehicleID, " for ", TargetPart);
-    !perform_booking(VehicleID, SlotID, TargetPart, Tech).
-
-// Fallback for no parts available for that specific target component
-+!evaluate_request(VehicleID, TargetPart, Urgency) : parts_inventory(TargetPart, 0) <- 
-    .send(VehicleID, tell, booking_declined(parts_shortage(TargetPart))).
-
-// General capacity fallback
-+!evaluate_request(VehicleID, TargetPart, Urgency) <- 
-    .send(VehicleID, tell, booking_deferred(next_available, service_center_agent)).
-
-
-// =============================================================================
-// service_center_agent.asl — Fixed Async Trigger Syntax
-// =============================================================================
-
-+!perform_booking(VehicleID, SlotID, TargetPart, Tech) <- 
-    ?current_capacity(C); -+current_capacity(C - 1);
-    ?parts_inventory(TargetPart, Qty); -+parts_inventory(TargetPart, Qty - 1);
-    
-    .time(H, M, S);
-    RecordID = S; 
-    
-    // Write clean data to Blockchain mock interface
-    writeServiceRecord(VehicleID, TargetPart, Tech, "scheduled");
-    
-    // Notify corresponding coordination channels
-    .send(VehicleID, tell, booking_confirmed(SlotID, service_center_agent));
-    .send(fleet_coordinator_agent, tell, booking_confirmed(VehicleID));
-    
-    .print("[ServiceCenterAgent] Booking successfully verified for ", VehicleID, " with item: ", TargetPart);
-    
-    // FIX: Removed the leading dot. Triggering a standard AgentSpeak sub-goal.
-    !!background_service_cycle(VehicleID, TargetPart, Tech, RecordID, SlotID).
-
-// FIX: Updated matching operator pattern to standard achievement goal format (+!)
-+!background_service_cycle(VehicleID, TargetPart, Tech, RecordID, SlotID) <-
-    .wait(2500); // Safely pauses this sub-goal's execution thread without blocking the agent's main belief queue
-    .print("[ServiceCenterAgent] Technician ", Tech, " finished repairing ", VehicleID, " (", TargetPart, ")");
-    !complete_service(VehicleID, TargetPart, Tech, RecordID, SlotID).
-
-+!complete_service(VehicleID, Part, Tech, RID, SlotID) <- 
-    .send(fleet_coordinator_agent, tell, service_completed(VehicleID, RID));
-    .send(VehicleID, tell, service_cycle_finished);
-    !release_slot(SlotID).
-
-+!release_slot(SlotID) <-
-    -+available_slot(SlotID, available);
-    ?current_capacity(C); -+current_capacity(C + 1);
-    .print("[ServiceCenterAgent] Slot ", SlotID, " is now free. Capacity restored.").
+// Booking request forwarded by the FleetCoordinator.
++booking_request(VehicleID, Part, Urgency)
+    <- .print("[ServiceCenterAgent] Received request from ", VehicleID,
+              " (part=", Part, ", urgency=", Urgency, ")");
+       !evaluate_request(VehicleID, Part, Urgency).
 
 // 1. Success: free slot AND part in stock AND capacity AND a qualified technician.
 //    Marked [atomic] so the whole reservation (slot, capacity, part, record id)
@@ -224,12 +160,20 @@ record_valid(RID) :- service_record(RID, _, _, _, _).
 // frees the slot. This runs as its own non-atomic intention, so the .wait does
 // not block other bookings.
 +pending_release(SlotID, VehicleID, Tech, RID)
-    <- .send(fleet_coordinator_agent, tell, service_completed(VehicleID, RID));
+    <- .print("[ServiceCenterAgent] Technician ", Tech, " repairing ", VehicleID, " (record #", RID, ")...");
+       .wait(2000);
        .print("[ServiceCenterAgent] Service completed for ", VehicleID,
               " by ", Tech, " (record #", RID, ").");
-       .wait(2000);
+       .send(fleet_coordinator_agent, tell, service_completed(VehicleID, RID));
+       .send(VehicleID, tell, service_cycle_finished);
        -pending_release(SlotID, VehicleID, Tech, RID);
        !release_slot(SlotID).
+
++!release_slot(SlotID)
+    <- -available_slot(SlotID, occupied); +available_slot(SlotID, available);
+       ?current_capacity(C); -current_capacity(C); +current_capacity(C + 1);
+       .print("[ServiceCenterAgent] Slot ", SlotID, " is now free. Capacity restored.");
+       !advertise_capacity.
 
 
 // ---------------------------------------------------------------------------
