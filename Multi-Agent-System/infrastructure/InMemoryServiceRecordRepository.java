@@ -2,7 +2,7 @@ package infrastructure;
 
 import application.port.ServiceRecordRepository;
 import domain.model.ServiceRecord;
-import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
 
@@ -25,7 +25,7 @@ import java.util.Optional;
  */
 public final class InMemoryServiceRecordRepository implements ServiceRecordRepository {
 
-    private final Map<Integer, ServiceRecord> records = new HashMap<>();
+    private final Map<Integer, ServiceRecord> records = new LinkedHashMap<>();
 
     @Override
     public void save(ServiceRecord record) {
